@@ -64,6 +64,8 @@ let editingBankId = null;
 let chartHoverPoint = null;
 let chartRenderState = { points: [], plot: null };
 let isAnimatingConverterSwap = false;
+let expandedInvestmentInstitutionIds = new Set();
+let revealingInvestmentInstitutionId = null;
 
 const elements = {
   grandTotal: document.querySelector("#grand-total"),
@@ -100,6 +102,9 @@ const elements = {
   modalBankName: document.querySelector("#modal-bank-name"),
   bankBalanceEditor: document.querySelector("#bank-balance-editor"),
   addBankBalanceRow: document.querySelector("#add-bank-balance-row"),
+  institutionModal: document.querySelector("#institution-modal"),
+  institutionModalForm: document.querySelector("#institution-modal-form"),
+  modalInstitutionName: document.querySelector("#modal-institution-name"),
   productModal: document.querySelector("#product-modal"),
   productModalForm: document.querySelector("#product-modal-form"),
   modalProductInstitution: document.querySelector("#modal-product-institution"),
@@ -165,7 +170,7 @@ function bindEvents() {
   });
 
   elements.addBankInline.addEventListener("click", openBankModal);
-  elements.addProductInline.addEventListener("click", openProductModal);
+  elements.addProductInline.addEventListener("click", openInstitutionModal);
   elements.addBankBalanceRow.addEventListener("click", () => addCurrencyRow(elements.bankBalanceEditor));
 
   elements.bankModalForm.addEventListener("submit", (event) => {
@@ -176,6 +181,11 @@ function bindEvents() {
   elements.productModalForm.addEventListener("submit", (event) => {
     event.preventDefault();
     addInvestmentProductFromModal();
+  });
+
+  elements.institutionModalForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    addInvestmentInstitutionFromModal();
   });
 
   [elements.bankBalanceEditor, elements.productCurrencyEditor].forEach((editor) => {
@@ -200,7 +210,7 @@ function bindEvents() {
   elements.modalProductInstitution.addEventListener("change", renderNewInstitutionField);
 
   document.addEventListener("click", (event) => {
-    if (event.target.matches("[data-close-modal]")) closeModals();
+    if (event.target.closest("[data-close-modal]")) closeModals();
   });
 
   document.addEventListener("keydown", (event) => {
@@ -247,6 +257,18 @@ function bindEvents() {
   });
 
   elements.investmentTableBody.addEventListener("click", (event) => {
+    const addProductButton = event.target.closest(".add-product-to-institution");
+    if (addProductButton) {
+      openProductModal(addProductButton.dataset.institutionId);
+      return;
+    }
+
+    const groupToggle = event.target.closest(".investment-group-toggle");
+    if (groupToggle) {
+      toggleInvestmentInstitution(groupToggle.dataset.institutionId);
+      return;
+    }
+
     const deleteButton = event.target.closest(".delete-product");
     if (!deleteButton) return;
     deleteInvestmentProduct(deleteButton.closest("tr").dataset.productId);
@@ -492,21 +514,27 @@ function openBankModal(bankId = null) {
   setTimeout(() => elements.modalBankName.focus(), 0);
 }
 
-function openProductModal() {
+function openInstitutionModal() {
+  elements.institutionModalForm.reset();
+  openModal(elements.institutionModal);
+  setTimeout(() => elements.modalInstitutionName.focus(), 0);
+}
+
+function openProductModal(institutionId) {
+  if (!state.investmentInstitutions.some((institution) => institution.id === institutionId)) {
+    showToast("请先选择理财机构");
+    return;
+  }
+
   elements.productModalForm.reset();
   elements.modalProductValue.value = "0";
-  renderModalInstitutionOptions();
+  renderModalInstitutionOptions(institutionId);
+  elements.modalProductInstitution.disabled = true;
   elements.productCurrencyEditor.innerHTML = "";
   addCurrencyRow(elements.productCurrencyEditor, { currency: "HKD", amount: 0 });
   renderNewInstitutionField();
   openModal(elements.productModal);
-  setTimeout(() => {
-    if (elements.modalProductInstitution.value === NEW_INSTITUTION_VALUE) {
-      elements.modalNewInstitution.focus();
-    } else {
-      elements.modalProductName.focus();
-    }
-  }, 0);
+  setTimeout(() => elements.modalProductName.focus(), 0);
 }
 
 function openModal(modal) {
@@ -516,9 +544,11 @@ function openModal(modal) {
 
 function closeModals() {
   elements.bankModal.hidden = true;
+  elements.institutionModal.hidden = true;
   elements.productModal.hidden = true;
   document.body.classList.remove("modal-open");
   editingBankId = null;
+  elements.modalProductInstitution.disabled = false;
 }
 
 function addCurrencyRow(editor, values = {}) {
@@ -552,27 +582,21 @@ function updateCurrencyRowMode(row) {
   row.querySelector(".custom-currency-label-field").hidden = !isCustom;
 }
 
-function renderModalInstitutionOptions() {
+function renderModalInstitutionOptions(selectedInstitutionId = "") {
   const existingOptions = state.investmentInstitutions
     .map((institution) => {
       return `<option value="${institution.id}">${escapeHtml(institution.name)}</option>`;
     })
     .join("");
 
-  elements.modalProductInstitution.innerHTML = [
-    existingOptions,
-    `<option value="${NEW_INSTITUTION_VALUE}">新增机构</option>`,
-  ].join("");
-
-  if (!state.investmentInstitutions.length) {
-    elements.modalProductInstitution.value = NEW_INSTITUTION_VALUE;
-  }
+  elements.modalProductInstitution.innerHTML = existingOptions;
+  elements.modalProductInstitution.value =
+    selectedInstitutionId || state.investmentInstitutions[0]?.id || "";
 }
 
 function renderNewInstitutionField() {
-  const isNew = elements.modalProductInstitution.value === NEW_INSTITUTION_VALUE;
-  elements.newInstitutionField.hidden = !isNew;
-  elements.modalNewInstitution.required = isNew;
+  elements.newInstitutionField.hidden = true;
+  elements.modalNewInstitution.required = false;
 }
 
 function addBankFromModal() {
@@ -604,6 +628,21 @@ function addBankFromModal() {
   refreshMissingRatesForBalances(balances);
 }
 
+function addInvestmentInstitutionFromModal() {
+  const name = elements.modalInstitutionName.value.trim();
+  if (!name) {
+    elements.modalInstitutionName.focus();
+    return;
+  }
+
+  const institution = createInvestmentInstitution(name);
+  expandedInvestmentInstitutionIds.add(institution.id);
+  persist();
+  render();
+  closeModals();
+  showToast("理财机构已添加");
+}
+
 function addInvestmentProductFromModal() {
   const institutionId = resolveModalInstitutionId();
   if (!institutionId) return;
@@ -624,6 +663,8 @@ function addInvestmentProductFromModal() {
     currency,
     value: normalizeAmount(elements.modalProductValue.value),
   });
+  expandedInvestmentInstitutionIds.add(institutionId);
+  revealingInvestmentInstitutionId = institutionId;
 
   persist();
   render();
@@ -633,22 +674,16 @@ function addInvestmentProductFromModal() {
 }
 
 function resolveModalInstitutionId() {
-  if (elements.modalProductInstitution.value !== NEW_INSTITUTION_VALUE) {
-    return elements.modalProductInstitution.value;
-  }
+  return elements.modalProductInstitution.value;
+}
 
-  const name = elements.modalNewInstitution.value.trim();
-  if (!name) {
-    elements.modalNewInstitution.focus();
-    return "";
-  }
-
+function createInvestmentInstitution(name) {
   const institution = {
     id: createId(),
     name,
   };
   state.investmentInstitutions.push(institution);
-  return institution.id;
+  return institution;
 }
 
 function collectCurrencyRows(editor) {
@@ -706,10 +741,6 @@ function updateInvestmentFromRow(row, target) {
   const product = state.investmentProducts.find((item) => item.id === row.dataset.productId);
   if (!product) return;
 
-  if (target.classList.contains("product-institution-select")) {
-    product.institutionId = target.value;
-  }
-
   if (target.classList.contains("product-name-input")) {
     product.name = target.value.slice(0, 60);
   }
@@ -726,6 +757,7 @@ function updateInvestmentFromRow(row, target) {
   persist();
   renderSummary();
   renderInvestmentRowTotal(row, product);
+  updateInvestmentGroupTotal(product.institutionId);
 }
 
 function deleteBank(bankId) {
@@ -1056,34 +1088,136 @@ function renderInvestmentTable() {
   elements.investmentTableBody.innerHTML = "";
   elements.investmentEmptyState.classList.toggle(
     "visible",
-    state.investmentProducts.length === 0,
+    state.investmentInstitutions.length === 0,
   );
 
-  state.investmentProducts.forEach((product) => {
-    const row = elements.investmentRowTemplate.content.firstElementChild.cloneNode(true);
-    row.dataset.productId = product.id;
-    row.querySelector(".product-name-input").value = product.name;
-    row.querySelector(".product-value-input").value = formatPlainAmount(product.value);
+  getInvestmentInstitutionGroups().forEach((group) => {
+    const isExpanded = expandedInvestmentInstitutionIds.has(group.id);
+    const shouldRevealProducts = isExpanded && group.id === revealingInvestmentInstitutionId;
+    elements.investmentTableBody.append(createInvestmentGroupRow(group, isExpanded));
 
-    const institutionSelect = row.querySelector(".product-institution-select");
-    institutionSelect.innerHTML = state.investmentInstitutions
-      .map((institution) => {
-        return `<option value="${institution.id}">${escapeHtml(institution.name)}</option>`;
-      })
-      .join("");
-    institutionSelect.value = product.institutionId;
-
-    const currencySelect = row.querySelector(".product-currency-select");
-    currencySelect.innerHTML = state.currencies
-      .map((currency) => {
-        return `<option value="${currency.code}">${currency.code}</option>`;
-      })
-      .join("");
-    currencySelect.value = product.currency;
-
-    renderInvestmentRowTotal(row, product);
-    elements.investmentTableBody.append(row);
+    if (!isExpanded) return;
+    group.products.forEach((product, index) => {
+      const row = createInvestmentProductRow(product, {
+        reveal: shouldRevealProducts,
+        revealIndex: index,
+      });
+      elements.investmentTableBody.append(row);
+    });
   });
+  revealingInvestmentInstitutionId = null;
+}
+
+function createInvestmentGroupRow(group, isExpanded) {
+  const row = document.createElement("tr");
+  row.className = "investment-group-row";
+  row.dataset.institutionId = group.id;
+  row.innerHTML = `
+    <td colspan="6">
+      <div class="investment-group-line">
+        <button class="investment-group-toggle" type="button" data-institution-id="${escapeHtml(group.id)}" aria-expanded="${isExpanded}">
+          <span class="group-chevron" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg>
+          </span>
+          <span class="group-title">${escapeHtml(group.name)}</span>
+        </button>
+        <span class="group-product-actions">
+          <span class="group-count">${group.products.length} 个产品</span>
+          <button class="icon-button add-product-to-institution" type="button" data-institution-id="${escapeHtml(group.id)}" title="新增产品" aria-label="为 ${escapeHtml(group.name)} 新增产品">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+        </span>
+        <strong class="group-total">${group.totalText}</strong>
+      </div>
+    </td>
+  `;
+  return row;
+}
+
+function createInvestmentProductRow(product, options = {}) {
+  const row = elements.investmentRowTemplate.content.firstElementChild.cloneNode(true);
+  row.classList.add("investment-product-row");
+  if (options.reveal) {
+    row.classList.add("is-revealing");
+    row.style.setProperty("--reveal-delay", `${Math.min(options.revealIndex * 34, 136)}ms`);
+  }
+  row.dataset.productId = product.id;
+  row.querySelector(".product-name-input").value = product.name;
+  row.querySelector(".product-value-input").value = formatPlainAmount(product.value);
+
+  const currencySelect = row.querySelector(".product-currency-select");
+  currencySelect.innerHTML = state.currencies
+    .map((currency) => {
+      return `<option value="${currency.code}">${currency.code}</option>`;
+    })
+    .join("");
+  currencySelect.value = product.currency;
+
+  renderInvestmentRowTotal(row, product);
+  return row;
+}
+
+function getInvestmentInstitutionGroups() {
+  const byId = new Map();
+  state.investmentInstitutions.forEach((institution) => {
+    byId.set(institution.id, {
+      id: institution.id,
+      name: institution.name,
+      products: [],
+    });
+  });
+
+  state.investmentProducts.forEach((product) => {
+    if (!byId.has(product.institutionId)) {
+      byId.set(product.institutionId || "unassigned", {
+        id: product.institutionId || "unassigned",
+        name: "未分配机构",
+        products: [],
+      });
+    }
+    byId.get(product.institutionId || "unassigned").products.push(product);
+  });
+
+  return [...byId.values()].map((group) => ({
+    ...group,
+    totalText: formatInvestmentGroupTotal(group.products),
+  }));
+}
+
+function formatInvestmentGroupTotal(products) {
+  let hasMissingRate = false;
+  const totalHkd = products.reduce((sum, product) => {
+    const converted = convertToHkd(product.value, product.currency);
+    if (converted == null) {
+      hasMissingRate = true;
+      return sum;
+    }
+    return sum + converted;
+  }, 0);
+
+  if (hasMissingRate) return "等待汇率";
+  const baseTotal = fromHkd(totalHkd, state.baseCurrency);
+  return baseTotal == null ? "等待汇率" : formatMoney(baseTotal, state.baseCurrency);
+}
+
+function toggleInvestmentInstitution(institutionId) {
+  if (expandedInvestmentInstitutionIds.has(institutionId)) {
+    expandedInvestmentInstitutionIds.delete(institutionId);
+    revealingInvestmentInstitutionId = null;
+  } else {
+    expandedInvestmentInstitutionIds.add(institutionId);
+    revealingInvestmentInstitutionId = institutionId;
+  }
+  renderInvestmentTable();
+}
+
+function updateInvestmentGroupTotal(institutionId) {
+  const group = getInvestmentInstitutionGroups().find((item) => item.id === institutionId);
+  const row = elements.investmentTableBody.querySelector(
+    `.investment-group-row[data-institution-id="${CSS.escape(institutionId)}"]`,
+  );
+  if (!group || !row) return;
+  row.querySelector(".group-total").textContent = group.totalText;
 }
 
 function formatBalanceList(balances) {
@@ -1105,7 +1239,7 @@ function startInlineBalanceEdit(chip) {
   const input = document.createElement("input");
   input.className = "balance-inline-input";
   input.type = "number";
-  input.step = "0.01";
+  input.step = "1";
   input.inputMode = "decimal";
   input.value = formatPlainAmount(bank.balances[currency]);
   input.setAttribute("aria-label", `${currency} 余额`);
