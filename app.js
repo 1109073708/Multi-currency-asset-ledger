@@ -201,7 +201,6 @@ function bindEvents() {
 
   document.addEventListener("click", (event) => {
     if (event.target.matches("[data-close-modal]")) closeModals();
-    if (event.target.classList.contains("modal-backdrop")) closeModals();
   });
 
   document.addEventListener("keydown", (event) => {
