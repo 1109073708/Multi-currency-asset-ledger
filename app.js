@@ -5,6 +5,7 @@ const DEFAULT_CURRENCIES = [
 ];
 
 const STORAGE_KEY = "money-ledger-v1";
+const THEME_STORAGE_KEY = "money-ledger-theme-v1";
 const EXCHANGE_API_BASE = "https://api.frankfurter.dev/v2";
 const AUTO_REFRESH_MS = 15 * 60 * 1000;
 const HISTORY_DAYS = 365;
@@ -22,6 +23,44 @@ const CHART_RANGES = [
   { key: "week", label: "周", days: 7 },
   { key: "month", label: "月", days: 30 },
   { key: "year", label: "年", days: 365 },
+];
+const THEMES = [
+  {
+    key: "classic",
+    label: "墨绿",
+    description: "清爽稳重",
+    colors: ["#116a54", "#d9ebe5", "#eff2ec"],
+  },
+  {
+    key: "clay",
+    label: "陶土",
+    description: "Anthropic 感",
+    colors: ["#9b5a3c", "#ead8c8", "#f2eee7"],
+  },
+  {
+    key: "harbor",
+    label: "海港蓝",
+    description: "冷静清晰",
+    colors: ["#2563eb", "#d5e2f3", "#eef3f8"],
+  },
+  {
+    key: "amber",
+    label: "晨光琥珀",
+    description: "温暖柔和",
+    colors: ["#b45309", "#f3dec0", "#f4efe6"],
+  },
+  {
+    key: "berry",
+    label: "莓果灰",
+    description: "精致醒目",
+    colors: ["#9d174d", "#ead4df", "#f1edf0"],
+  },
+  {
+    key: "night",
+    label: "夜间",
+    description: "低亮护眼",
+    colors: ["#38bdf8", "#1e3a4c", "#10171f"],
+  },
 ];
 
 const DEFAULT_STATE = {
@@ -55,6 +94,7 @@ const DEFAULT_STATE = {
   investmentProducts: [],
 };
 
+let currentTheme = loadTheme();
 let state = loadState();
 let toastTimer = null;
 let ratesRefreshTimer = null;
@@ -96,6 +136,9 @@ const elements = {
   chartLatest: document.querySelector("#chart-latest"),
   exportData: document.querySelector("#export-data"),
   importData: document.querySelector("#import-data"),
+  themeTrigger: document.querySelector("#theme-trigger"),
+  themeTriggerSwatch: document.querySelector("#theme-trigger-swatch"),
+  themeMenu: document.querySelector("#theme-menu"),
   bankModal: document.querySelector("#bank-modal"),
   bankModalTitle: document.querySelector("#bank-modal-title"),
   bankModalForm: document.querySelector("#bank-modal-form"),
@@ -116,6 +159,7 @@ const elements = {
   currencyRowTemplate: document.querySelector("#currency-row-template"),
 };
 
+applyTheme(currentTheme);
 render();
 bindEvents();
 scheduleRateRefresh();
@@ -211,10 +255,12 @@ function bindEvents() {
 
   document.addEventListener("click", (event) => {
     if (event.target.closest("[data-close-modal]")) closeModals();
+    if (!event.target.closest(".theme-picker")) closeThemeMenu();
   });
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeModals();
+    if (event.key === "Escape") closeThemeMenu();
   });
 
   elements.bankTableBody.addEventListener("input", (event) => {
@@ -301,6 +347,15 @@ function bindEvents() {
 
   elements.exportData.addEventListener("click", exportLedger);
   elements.importData.addEventListener("change", importLedger);
+  elements.themeTrigger.addEventListener("click", () => {
+    toggleThemeMenu();
+  });
+  elements.themeMenu.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-theme]");
+    if (!button) return;
+    setTheme(button.dataset.theme);
+    closeThemeMenu();
+  });
   elements.rateChart.addEventListener("mousemove", handleChartPointerMove);
   elements.rateChart.addEventListener("mouseleave", hideChartTooltip);
 
@@ -318,6 +373,60 @@ function loadState() {
   } catch {
     return cloneDefaultState();
   }
+}
+
+function loadTheme() {
+  try {
+    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+    return getTheme(savedTheme)?.key || THEMES[0].key;
+  } catch {
+    return THEMES[0].key;
+  }
+}
+
+function getTheme(themeKey) {
+  return THEMES.find((theme) => theme.key === themeKey);
+}
+
+function applyTheme(themeKey) {
+  const theme = getTheme(themeKey) || THEMES[0];
+  currentTheme = theme.key;
+  if (theme.key === THEMES[0].key) {
+    document.documentElement.removeAttribute("data-theme");
+  } else {
+    document.documentElement.dataset.theme = theme.key;
+  }
+  if (elements.themeTriggerSwatch) {
+    elements.themeTriggerSwatch.style.setProperty("--theme-swatch-primary", theme.colors[0]);
+    elements.themeTriggerSwatch.style.setProperty("--theme-swatch-soft", theme.colors[1]);
+    elements.themeTriggerSwatch.style.setProperty("--theme-swatch-bg", theme.colors[2]);
+  }
+}
+
+function setTheme(themeKey) {
+  const theme = getTheme(themeKey);
+  if (!theme) return;
+
+  applyTheme(theme.key);
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme.key);
+  } catch {
+    // Theme persistence is a best-effort UI preference.
+  }
+  renderThemePicker();
+  renderRateChart();
+}
+
+function toggleThemeMenu() {
+  const willOpen = elements.themeMenu.hidden;
+  elements.themeMenu.hidden = !willOpen;
+  elements.themeTrigger.setAttribute("aria-expanded", String(willOpen));
+  if (willOpen) renderThemePicker();
+}
+
+function closeThemeMenu() {
+  elements.themeMenu.hidden = true;
+  elements.themeTrigger.setAttribute("aria-expanded", "false");
 }
 
 function migrateImportedState(importedState) {
@@ -928,12 +1037,36 @@ function normalizeHistoryPayload(payload) {
 }
 
 function render() {
+  renderThemePicker();
   renderBaseCurrencyTabs();
   renderRatesPanel();
   renderSummary();
   renderBankTable();
   renderInvestmentTable();
   renderRateChart();
+}
+
+function renderThemePicker() {
+  const theme = getTheme(currentTheme) || THEMES[0];
+  applyTheme(theme.key);
+  elements.themeMenu.innerHTML = THEMES.map((item) => {
+    const active = item.key === currentTheme ? " active" : "";
+    const swatches = item.colors
+      .map((color) => `<span style="background: ${color}"></span>`)
+      .join("");
+    return `
+      <button class="theme-option${active}" type="button" data-theme="${item.key}" aria-pressed="${item.key === currentTheme}">
+        <span class="theme-option-swatch" aria-hidden="true">${swatches}</span>
+        <span class="theme-option-label">
+          <strong>${escapeHtml(item.label)}</strong>
+          <small>${escapeHtml(item.description)}</small>
+        </span>
+        <span class="theme-check" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></svg>
+        </span>
+      </button>
+    `;
+  }).join("");
 }
 
 function renderBaseCurrencyTabs() {
@@ -1301,12 +1434,13 @@ function renderRateChart() {
   canvas.height = height * pixelRatio;
   context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   context.clearRect(0, 0, width, height);
+  const chartColors = getChartColors();
 
   const padding = { top: 18, right: 14, bottom: 28, left: 42 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
 
-  context.strokeStyle = "#d9ded6";
+  context.strokeStyle = chartColors.grid;
   context.lineWidth = 1;
   context.beginPath();
   for (let index = 0; index < 4; index += 1) {
@@ -1319,7 +1453,7 @@ function renderRateChart() {
   if (series.length < 2) {
     chartRenderState = { points: [], plot: null };
     hideChartTooltip({ skipRender: true });
-    context.fillStyle = "#5c6b63";
+    context.fillStyle = chartColors.text;
     context.font = "700 13px system-ui, sans-serif";
     context.textAlign = "center";
     context.fillText("暂无历史数据", width / 2, height / 2);
@@ -1348,7 +1482,7 @@ function renderRateChart() {
     },
   };
 
-  context.fillStyle = "#5c6b63";
+  context.fillStyle = chartColors.text;
   context.font = "700 11px system-ui, sans-serif";
   context.textAlign = "left";
   context.fillText(formatRateLabel(yMax), 8, padding.top + 4);
@@ -1363,7 +1497,7 @@ function renderRateChart() {
     if (index === 0) context.moveTo(point.x, point.y);
     else context.lineTo(point.x, point.y);
   });
-  context.strokeStyle = "#116a54";
+  context.strokeStyle = chartColors.line;
   context.lineWidth = 2.5;
   context.stroke();
 
@@ -1371,35 +1505,51 @@ function renderRateChart() {
     ? points.find((point) => point.date === chartHoverPoint.date)
     : null;
   if (activePoint) {
-    drawChartHover(context, activePoint, padding, plotHeight);
+    drawChartHover(context, activePoint, padding, plotHeight, chartColors);
   }
 
   const lastPoint = points[points.length - 1];
   context.beginPath();
   context.arc(lastPoint.x, lastPoint.y, 4, 0, Math.PI * 2);
-  context.fillStyle = "#ffffff";
+  context.fillStyle = chartColors.surface;
   context.fill();
-  context.strokeStyle = "#116a54";
+  context.strokeStyle = chartColors.line;
   context.lineWidth = 2;
   context.stroke();
 }
 
-function drawChartHover(context, point, padding, plotHeight) {
+function getChartColors() {
+  return {
+    grid: getCssVar("--chart-grid"),
+    line: getCssVar("--chart-line"),
+    text: getCssVar("--chart-text"),
+    surface: getCssVar("--surface"),
+    accentStrong: getCssVar("--accent-strong"),
+  };
+}
+
+function getCssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function drawChartHover(context, point, padding, plotHeight, colors) {
   context.save();
   context.beginPath();
   context.moveTo(point.x, padding.top);
   context.lineTo(point.x, padding.top + plotHeight);
-  context.strokeStyle = "rgba(17, 106, 84, 0.32)";
+  context.strokeStyle = colors.line;
+  context.globalAlpha = 0.36;
   context.lineWidth = 1;
   context.setLineDash([4, 4]);
   context.stroke();
+  context.globalAlpha = 1;
   context.setLineDash([]);
 
   context.beginPath();
   context.arc(point.x, point.y, 5, 0, Math.PI * 2);
-  context.fillStyle = "#ffffff";
+  context.fillStyle = colors.surface;
   context.fill();
-  context.strokeStyle = "#0b4c3c";
+  context.strokeStyle = colors.accentStrong;
   context.lineWidth = 2.5;
   context.stroke();
   context.restore();
